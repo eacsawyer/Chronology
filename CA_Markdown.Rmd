@@ -19,13 +19,6 @@ knitr::opts_chunk$set(echo = TRUE)
  Edited by:   CP and EB 5.28.2019 Comments and Section editing for UR code
  Converted to RMD: ECS June 2019
 
-#Cearmic MCD, CA, and Seriation Ur Code
-
-*Setup*
-- Load necessary libraries (packages)
-- Establish a DBI connection to DAACS PostgreSQL database and submit SQL queries
-- Link to file with database password called 'credentials.'
-
 ```{r libraries, warning=FALSE, message=FALSE}
 
 library(RPostgreSQL)
@@ -36,9 +29,21 @@ library (ca)
 library (plotrix)
 library(ggplot2)
 library(viridis)
+library(ggrepel)
 ```
+
+*Setup*
+- Establish a DBI connection to DAACS PostgreSQL database and submit SQL queries
+- Link to file with database password
+
 ```{r connect to drc, include=FALSE}
-source("credentials.R")
+
+# tell DBI which driver to use
+pgSQL <- dbDriver("PostgreSQL")
+# establish the connection
+DRCcon<-dbConnect(pgSQL, host='drc.iath.virginia.edu', port='5432',
+                  dbname='daacs-production',
+                  user='drcquery', password='!queryacct!')
 ```
 
 ### 1. Get table ware type date ranges table
@@ -110,7 +115,6 @@ summary1
 AllCeramicCount <- summary1 %>% summarise(Count=sum(count))
 
 ```
-
 
 ### 3. Customizations: Ware Type dates or names
 The following code chunks are optional. 
@@ -205,7 +209,7 @@ wareTypeData$QuadratID[is.na(wareTypeData$QuadratID)] <- ''
     - Combined Feature Number and Context as the 'unit' when there is a related Feature Number but no DAACS SG
     - Combined Feature Number and DAACS SG as the 'unit' when there is a related Feature Number and a DAACS SG 
 
-```{r Unit variable conditional coding, eval=FALSE, include=FALSE}
+```{r Unit variable conditional coding, eval=TRUE, include=TRUE}
 wareTypeData_Unit <- wareTypeData %>%  
   mutate( unit = case_when(
     FeatureNumber == "" & DAACSStratigraphicGroup == "" 
@@ -228,18 +232,18 @@ wareTypeData_Unit <- wareTypeData %>%
 ```
 
 #### 6.3 Generate Unit Variable as QuadratID
+Use this to assign QuadratID to the 'unit' variable (in other words, aggreate assemblages at the quadrat level)
 
 ```{r unit variable as quadID, eval=FALSE, include=FALSE}
 wareTypeData_Unit <- wareTypeData %>%  
-  mutate(unit = case_when(
-  QuadratID == "" ~ paste(Context)
-  QuadratID != "" ~ paste(QuadratID)
+  mutate(unit = case_when(QuadratID == "" ~ paste(Context), QuadratID != "" ~ paste(QuadratID)
   ))
 ```
 
 #### 6.4 Assign Quadrat and Context to the unit
+Use this to assign both the QuadratID and the Contect to the 'unit' variable.
 
-```{r QuadID and Context as Unit}
+```{r QuadID and Context as Unit, eval=FALSE, include=FALSE}
 wareTypeData_Unit <- wareTypeData %>% 
   mutate(unit = case_when(
     QuadratID == "" ~paste(Context),
@@ -252,7 +256,8 @@ wareTypeData_Unit <- wareTypeData %>%
 table(wareTypeData_Unit$unit)
 ```
 
-### 7. Transpose the data for the MCD and CA
+### 7. Transpose Data 
+The data must be transposed to compute the MCDs and execute CA
 
 ```{r transpose data}
 wareByUnitT <- wareTypeData_Unit %>% group_by(Ware,unit) %>% 
@@ -296,28 +301,26 @@ wareByUnitT2 <- wareByUnitT1[,c(T,colSums(wareByUnitT1[,-1])
                                 > 0)]
 ```
 
-### 9. Define functions to Remove Types w/o Dates and then compute MCDs
-# 9.1 We build a function that removes types with no dates, either because they 
-# have no dates in the MCDTypeTable or because they are not MCD Ware 
-# Types (e.g. they are CEW Types). This approach is useful because it returns a 
-# dataframe that contains ONLY types that went into the MCDs, which you may 
-# want to analyze using using other methods (e.g. CA).
-# Two arguments: 
-#   unitData: dataframe with counts of ware types in units
-#   the left variable IDs the units, while the rest of the varaibles are types
-#   typeData: a dataframe with at least three variables named 'Ware', 'midPoint'
-#   and 'inversevar' containing the manufacturing midpoints and inverse 
-#   variances for the types.
-# Returns a list comprised of two dataframes:
-#   unitDataWithDates has units with types with dates
-#   typeDataWithDates has the types with dates
+### 9. Define functions to Remove Types w/o Dates and Compute MCDs
+#### 9.1 Type removal function
+We build a function that removes types with no dates, either because they have no dates in the MCDTypeTable or because they are not MCD Ware Types (e.g. they are CEW Types). This approach is useful because it returns a dataframe that contains ONLY types that went into the MCDs, which you may want to analyze using using other methods (e.g. CA).
+Two arguments: 
+  - 'unitData': dataframe with counts of ware types in units the left variable IDs the units, while the rest of the varaibles are types 
+  - 'typeData': a dataframe with at least three variables named 'Ware', 'midPoint' and 'inversevar' containing the manufacturing midpoints and inverse variances for the types.
+Returns a list comprised of two dataframes:
+- unitDataWithDates has units with types with dates
+- typeDataWithDates has the types with dates
+
+```{r RemoveTypesNoDates Function}
 RemoveTypesNoDates <- function(unitData,typeData){
-  #unitData<- WareByUnitT1
-  #typeData <-MCDTypeTable
+#  unitData<- WareByUnitT1
+#  typeData <-MCDTypeTable
   typesWithNoDates <- typeData$Ware[(is.na(typeData$midPoint))] 
+  
   # types in the MCD table with no dates.
   moreTypesWithNoDates <- colnames(unitData)[-1][! colnames(unitData)[-1] %in% 
                                                    typeData$Ware] 
+  
   # types in the data that are NOT in the MCD Type table.
   typesWithNoDates <- c(typesWithNoDates, moreTypesWithNoDates)
   unitDataWithDates <- unitData[, ! colnames(unitData) %in%  typesWithNoDates]
@@ -327,23 +330,21 @@ RemoveTypesNoDates <- function(unitData,typeData){
   return(list(unitData = unitDataWithDates, 
               typeData = typeDataWithDates))
 }
+```
 
-# run the function
+```{r run function}
 dataForMCD <- RemoveTypesNoDates(wareByUnitT2 , MCDTypeTable)
+```
 
+#### 9.2 Define function that computes MCDs
+Two arguments: 
+- 'unitData': a dataframe with the counts of ware types in units. We assume the first column IDs the units, while the rest of the columns are counts of types.
+- 'typeData': a dataframe with at least two variables named 'midPoint' and 'inversevar' containing the manufacturing midpoints and inverse variances for the types.
+Returns a list comprise of two dataframes: 
+- 'MCDs' has units and the vanilla and BLUE MCDs
+- 'midPoints' has the types and manufacturing midpoints, in the order they appeared in the input 'unitData' dataframe.
 
-# Define a function that computes MCDs
-# Two arguments: 
-#   unitData: a dataframe with the counts of ware types in units. 
-#   We assume the first column IDs the units, while the rest of the columns 
-#   are counts of types.
-#   typeData: a dataframe with at least two variables named 'midPoint' and 
-#   'inversevar' containing the manufacturing midpoints and inverse variances 
-#   for the types.
-# Returns a list comprise of two dataframes: 
-#     MCDs has units and the vanilla and BLUE MCDs
-#     midPoints has the types and manufacturing midpoints, in the order they 
-#     appeared in the input unitData dataframe.  
+```{r MCD Function}
 EstimateMCD<- function(unitData,typeData){
   countMatrix<- as.matrix(unitData[,2:ncol(unitData)])
   originalUnitName <-  colnames(unitData)[1]
@@ -355,8 +356,8 @@ EstimateMCD<- function(unitData,typeData){
   nTypes<- nrow(typeData)
   nTypesFnd <-ncol(countMatrix)
   typeNames<- colnames(countMatrix)
-  # create two col vectors to hold inverse variances and midpoints
-  # _in the order in which the type variables occur in the data_.
+  
+# create two col vectors to hold inverse variances and midpoints in the order in which the type variables occur in the data.
   invVar<-matrix(data=0,nrow=nTypesFnd, ncol=1)
   mPoint <- matrix(data=0,nrow=nTypesFnd, ncol=1)
   for (i in (1:nTypes)){
@@ -367,7 +368,6 @@ EstimateMCD<- function(unitData,typeData){
       }
     }
   }
-  # compute the blue MCDs
   # get a unit by type matrix of inverse variances
   invVarMat<-matrix(t(invVar),nUnits,nTypesFnd, byrow=T)
   # a matrix of weights
@@ -406,24 +406,26 @@ EstimateMCD<- function(unitData,typeData){
   MCDs <- list('MCDs'=MCDs,'midPoints'=midPoints)
   return(MCDs)
 } 
-# end of function EstimateMCD
 
-# apply the function
+```
+
+#### 9.3 Apply the function and view results
+
+```{r apply the function}
 MCDByUnit<-EstimateMCD(dataForMCD$unitData, dataForMCD$typeData)
 
-# let's see what it looks like
 MCDByUnit
 
-#### 10. Seriation diagram based on MCDs ####
-# First define a  function to sort the rows and cols of a matrix based on the
-# orders from two arguments (e.g. MCDs and midpoints)
-# arguments:  the name of the variable that contains the unit scores (e.g. MCDs)
-#             the name of the variable that contains the type score (e.g. 
-#               the midpoints) 
-#             the name of the dataframe that contains the counts of ware types 
-#               in units
-# returns:    the sorted dataframe 
+```
 
+### 10. Seriation diagram based on MCDs
+First define a  function to sort the rows and cols of a matrix based on the orders from two arguments (e.g. MCDs and midpoints)
+- Arguments: the name of the variable that contains the unit scores (e.g. MCDs)
+             the name of the variable that contains the type score (e.g. the midpoints) 
+             the name of the dataframe that contains the counts of ware types in units
+- Returns:   the sorted dataframe 
+
+```{r Seriation}
 sortData<- function(unitScores,typeScores,unitData){
   sortedData<-unitData[order(unitScores, decreasing=T),]
   sortedData<-sortedData[,c(1,order(typeScores)+1)]
@@ -433,10 +435,13 @@ sortData<- function(unitScores,typeScores,unitData){
 unitDataSorted <- sortData(MCDByUnit$MCDs$blueMCD,
                            MCDByUnit$midPoints$mPoint,
                            dataForMCD$unitData)
+```
 
-#### 11.  Make a Ford-style battleship plot  ####
-# convert to a matrix, whose cols are the counts
-# make the unit name a 'rowname" of the matrix
+### 11. Make a Ford-style battleship plot
+- Convert to a matrix, whose cols are the counts
+- Make the unit name a 'rowname" of the matrix
+
+```{r Seriation Plot}
 Mat<-as.matrix(unitDataSorted[,2:ncol(unitDataSorted)])
 rownames(Mat)<-unitDataSorted$unit
 rSums<- matrix (rowSums(Mat),nrow(Mat),ncol(Mat), byrow=F)
@@ -448,35 +453,46 @@ battleship.plot(MatProp,
                 xlab='Ware Type',
                 ylab= 'Context',
                 col='grey')
+```
 
+### 12. Correspondence Analysis
+You need to decide if you want to use exactly the same data that went into the MCD analysis (dataForMCD$unitData), or the data with all the ware types (e.g. if you want to include CEWs/ware types that don't have dates). To chose, comment out one of these two lines that begin formating for CA:
+- Use all the data
+- Use ONLY the data used for MCDs
 
-#### 12. Now let's try some Correspondence Analysis ####
-# You need to decide if you want to use exactly the same data that
-# went into the MCD analysis (dataForMCD$unitData), or the 
-# data with all the ware types (e.g. if you want to include CEWs/ware types that don’t have dates).
-# To chose, commment out one of these two lines:
-wareByUnitT_forCA <- wareByUnitT2 # use all the data
-#wareByUnitT_forCA <- dataForMCD$unitData # use ONLY the data used for MCDs
+```{r CA prep}
+wareByUnitT_forCA <- wareByUnitT2  
+#wareByUnitT_forCA <- dataForMCD$unitData
 
-# 12.1 USE THIS SECTION AFTER AN INITIAL CA RUN TO remove types and units from the analysis that are outliers
+```
 
-# Remove units
-#wareByUnitT_forCA <- wareByUnitT_forCA %>% filter(
-#  unit != 'F11.SG18')
+#### 12.1 Remove Outliers
+**USE THIS SECTION AFTER AN INITIAL CA RUN TO remove types and/or units from the analysis that are outliers**
 
-# When you have removed a unit check to see if any of the column totals is now 0.  If any exist you will need to 
-# remove the ware type, otherwise the CA won't run
-#colSums(wareByUnitT_forCA[,-1])
+```{r outlier removal}
+wareByUnitT_forCA <- wareByUnitT_forCA %>% filter(
+  unit != '2581')
+```
 
-# Remove types
-# wareByUnitT_forCA <- wareByUnitT_forCA %>% select( 
-#     - 'Astbury Type', 
-#     - 'White Salt Glaze'
-#)
+#### 12.2 Check column totals and remove types (optional)
+When you have removed a unit check to see if any of the column totals is now 0.  If any exist you will need to remove the ware type, otherwise the CA won't run.
 
+```{r check columns}
+colSums(wareByUnitT_forCA[,-1])
+```
 
-#12.2 USE THIS SECTION TO RUN THE INITIAL CA AND THEN USE AGAIN AFTER REMOVING OUTLIERS                   
-#Run the CA
+To remove ware types, change to 'eval=TRUE, include=TRUE.'
+```{r remove types, eval=FALSE, include=FALSE}
+ wareByUnitT_forCA <- wareByUnitT_forCA %>% select( 
+     - 'Astbury Type', 
+     - 'White Salt Glaze'
+)
+```
+
+#### 12.3 Run the CA
+**USE THIS SECTION TO RUN THE INTIAL CA AND THEN USE AGAIN AFTER REMOVING OUTLIERS**                 
+
+```{r Run CA}
 matX <- as.matrix(wareByUnitT_forCA[,-1]) 
 rownames(matX) <- wareByUnitT_forCA$unit
 
@@ -486,19 +502,19 @@ ca1<-ca(matX)
 # put the result in dataframes
 inertia <- data.frame('Inertia' = prop.table(ca1$sv^2))
 
-
 rowScores <- data.frame(ca1$rowcoord[,1:5], unit =ca1$rownames)
 colScores <- data.frame(ca1$colcoord[,1:5], type =ca1$colnames)
 
+```
 
-# 12.3 Compute the broken stick model inertia
-# Broken stick model hows inertia percentage values would look if distribution was random -- i.e. null hypothesis.  
-# If the inertia values returned by the CA function are showing Dim 1 is capturing significant variation then Dim 1 values from CA 
-# will be higher than Dim 1 values from BS and Dim 2 values will be lower than values from BS
-# If Dim1 and Dim2 are significant CA, values in CA for both dimensions will be higher than both values in BS.
-# One piece of evidence that’s helping you evaluate whether patterning is real 
-# see https://rdrr.io/rforge/PCDimension/man/brokenStick.html for more information on the broken stick model
+#### 12.4 Compute the broken stick model inertia
+- Broken stick model shows inertia percentage values would look if distribution was random -- i.e. null hypothesis.  
+- If the inertia values returned by the CA function are showing Dim 1 is capturing significant variation then Dim 1 values from CA will be higher than Dim 1 values from BS and Dim 2 values will be lower than values from BS
+- If Dim1 and Dim2 are significant CA, values in CA for both dimensions will be higher than both values in BS.
+- One piece of evidence that's helping you evaluate whether patterning is real 
+- see <https://rdrr.io/rforge/PCDimension/man/brokenStick.html> for more information on the broken stick model
 
+```{r broken stick model}
 broken.stick <- function(p)
   # Compute the expected values of the broken-stick distribution for 'p' pieces.
   # Example: broken.stick.out.20 = broken.stick(20)
@@ -517,10 +533,12 @@ broken.stick <- function(p)
 }
 
 bs <- broken.stick(nrow(inertia))
+```
 
+#### 12.5 Plot the proportion of inertia
+Plot the inertia and save the plot for website chronology page/presentations. Make sure to update file names for this and all subsequent plots
 
-
-# plot the proportion of inertia
+```{r inertia plot}
 theme_set(theme_classic(base_size = 20))
 
 p <- ggplot(data=inertia , aes(x= 1:length(Inertia), y=Inertia)) +
@@ -533,17 +551,15 @@ p <- ggplot(data=inertia , aes(x= 1:length(Inertia), y=Inertia)) +
   geom_line(aes(y = bs[,2], x= bs[,1]), color = "black", linetype = "dashed", 
             size=1)
 p
-#save the plot for website chronology page/presentations
-#make sure to update file names for this and all subsequent plots
-#ggsave("SouthPav_InertiaPlot.png", p, width=10, height=7.5, dpi=300)
 
+ggsave("SouthPav_InertiaPlot.png", p, width=10, height=7.5, dpi=300)
+```
 
-# 12.4 plots of row and column scores for Dim 1 vs. Dim 2 and Dim 1 vs. Dim 3 
-# We are looking to see if Dim1 captures time, keep in mind that time may reside in two dimensions 
-# and you may be better off looking for clusters in the Dim1Dim2 scatterplot, removing outliers and running again.
-# It is an iterative process
+#### 12.6 Plots of row and column scores for Dim 1 vs. Dim 2 and Dim 1 vs. Dim 3 
+We are looking to see if Dim1 captures time, keep in mind that time may reside in two dimensions and you may be better off looking for clusters in the Dim1Dim2 scatterplot, removing outliers and running again. It is an iterative process.
+Save plots for website chronology page/presentations.
 
-# ggplot version of row scores dim 1 and dim 2
+```{r ggplot version of row scores dim 1 and dim 2}
 library(ggrepel)
 set.seed(42)
 p1 <- ggplot(rowScores, aes(x=Dim1,y=Dim2))+
@@ -556,10 +572,10 @@ p1 <- ggplot(rowScores, aes(x=Dim1,y=Dim2))+
        y= paste ("Dimension 2",":  ", round(inertia[2,]*100),'%', sep='')
   )
 p1
-#save the plot for website chronology page/presentations
-#ggsave("SouthPav_Figure1Dim1Dim2_2018cxt.png", p1, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Figure1Dim1Dim2_2018cxt.png", p1, width=10, height=7.5, dpi=300)
+```
 
-#ggplot version of col scores dim 1 and dim 2
+```{r ggplot version of col scores dim 1 and dim 2}
 p2 <- ggplot(colScores, aes(x = Dim1,y = Dim2))+
   geom_point(shape=21, size=5, colour="black", fill="cornflower blue")+
   #geom_text(aes(label= type),vjust=-.6, cex=5)+
@@ -570,11 +586,10 @@ p2 <- ggplot(colScores, aes(x = Dim1,y = Dim2))+
        y= paste ("Dimension 2",":  ", round(inertia[2,]*100),'%', sep='')
   )  
 p2
-#save the plot for website chronology page/presentations
-#ggsave("SouthPav_Figure2WareTypes_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Figure2WareTypes_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+```
 
-# ggplot version of row scores dim 1 and dim 3
-library(ggrepel)
+```{r ggplot version of row scores dim 1 and dim 3}
 set.seed(42)
 p1a <- ggplot(rowScores, aes(x=Dim1,y=Dim3))+
   geom_point(shape=21, size=5, colour="black", fill="cornflower blue")+
@@ -586,10 +601,10 @@ p1a <- ggplot(rowScores, aes(x=Dim1,y=Dim3))+
        y= paste ("Dimension 3",":  ", round(inertia[3,]*100),'%', sep='')
   )
 p1a
-#save the plot for website chronology page/presentations
-#ggsave("SouthPav_Figure1Dim1Dim3_2018cxt.png", p1, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Figure1Dim1Dim3_2018cxt.png", p1, width=10, height=7.5, dpi=300)
+```
 
-#ggplot version of col scores dim 1 and dim 3
+```{r ggplot version of col scores dim 1 and dim 3}
 p2a <- ggplot(colScores, aes(x = Dim1,y = Dim3))+
   geom_point(shape=21, size=5, colour="black", fill="cornflower blue")+
   #geom_text(aes(label= type),vjust=-.6, cex=5)+
@@ -600,18 +615,19 @@ p2a <- ggplot(colScores, aes(x = Dim1,y = Dim3))+
        y= paste ("Dimension 3",":  ", round(inertia[3,]*100),'%', sep='')
   )  
 p2a
-#save the plot for website chronology page/presentations
-#ggsave("SouthPav_Figure2Dim1Dim3Wares_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Figure2Dim1Dim3Wares_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+```
 
+####12.7 Sort on Dim1 scores and do battleship plot
+Sort the data matrix that went into the CA on the dim1 scores and do a battleship plot with the sorted data.
 
-# sort the data matrix that went into the CA on the dim1 scores and do a 
-# battleship plot with the sorted data.
+```{r}
 wareByUnitT_Sorted  <- sortData(rowScores$Dim1, colScores$Dim1, wareByUnitT_forCA)
 Mat<-as.matrix(wareByUnitT_Sorted[,-1])
 rownames(Mat)<-wareByUnitT_Sorted$unit
 rSums<- matrix (rowSums(Mat),nrow(Mat),ncol(Mat), byrow=F)
 MatProp<-Mat/rSums
-# Do the plot
+
 SeriationCA<-battleship.plot(MatProp,
                              mar=c(2,4,8,4),
                              cex.labels=.8,
@@ -621,15 +637,17 @@ SeriationCA<-battleship.plot(MatProp,
                              col='grey')
 
 SeriationCA
-#save the plot for website chronology page/presentations
-#ggsave("SouthPav_SeriationCADim1_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_SeriationCADim1_2018cxt.png", p2, width=10, height=7.5, dpi=300)
+```
 
-#### 13. Compare MCD and CA dim scores ####
-# create a data frame of units, counts, and mcds
+### 13. Compare MCD and CA dim scores
+Create a data frame of units, counts, and mcds, and then generate plots of CA scores and MCDs. Save plots for website chronology page/presentations
+
+```{r MCD and CA Comparisons}
 CA_MCD <- inner_join(MCDByUnit$MCDs, rowScores, by='unit' )
+```
 
-# Plot CA Dim 1 vs. MCDs
-#ggplot version of CA Dim 1 vs. MCDs
+```{r ggplot version of CA Dim 1 vs. MCDs}
 p3 <- ggplot(CA_MCD, aes(x=Dim1,y=blueMCD))+
   geom_point(shape=21, size=5, colour="black", fill="cornflower blue")+
   #geom_text(aes(label=unit),vjust=-.6, cex=5)+
@@ -639,10 +657,11 @@ p3 <- ggplot(CA_MCD, aes(x=Dim1,y=blueMCD))+
        x="Dimension 1", 
        y="BLUE MCD") 
 p3
-# save the plot for website chronology page/presentations
-# ggsave("SouthPav_Dim1BLUEMCD_2018cxt.png", p3, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Dim1BLUEMCD_2018cxt.png", p3, width=10, height=7.5, dpi=300)
 
-#ggplot version of CA Dim 2 vs. MCDs
+```
+
+```{r ggplot version of CA Dim 2 vs. MCDs}
 p4 <- ggplot(CA_MCD, aes(x = Dim2,y = blueMCD))+
   geom_point(shape=21, size=5, colour="black", fill="cornflower blue")+
   #geom_text(aes(label=unit),vjust=-.6, cex=5)+
@@ -652,43 +671,44 @@ p4 <- ggplot(CA_MCD, aes(x = Dim2,y = blueMCD))+
        x="Dimension 2", 
        y="BLUE MCD") 
 p4 
-#ggsave("SouthPav_Dim2BLUEMCD.png", p4, width=10, height=7.5, dpi=300)
+ggsave("SouthPav_Dim2BLUEMCD.png", p4, width=10, height=7.5, dpi=300)
+```
 
-#### 14. Histogram of Dim 1 scores for Phasing ####
-# Dim 1 Scores Weighted Histogram, you may need to change scale
+### 14. Histogram of Dim 1 scores for Phasing
+- This creates a weighted histogram of Dim 1 Scores. Depending on the CA values, you may need to change the scale.
+- Add lines for phase breaks
+*Note: don't do this until after you have removed outliers*
+
+```{r}
 dim1ForHist<- data.frame(dim1 = rep(CA_MCD$Dim1, CA_MCD$Count))
 p5 <- ggplot(dim1ForHist, aes(x = dim1)) +
   theme(plot.title = element_text(hjust = 0.5))+
   geom_histogram(aes(y=..density..), colour="black", fill="tan", binwidth=0.2, 
                  boundary= .1) +
-  scale_x_continuous(breaks=seq(- 8 , 4, 2))+
+  scale_x_continuous(breaks=seq(-4 , 4, 2))+
   labs(title="South Pavilion", x="Dimension 1", y="Density") +
   geom_density(fill=NA)
 p5
 
-
-# Add lines for phase breaks
-# Note -- don't do this until after you have removed outliers
 p5a <- p5 + geom_vline(xintercept=c(-1), colour = "gray", linetype = "dashed",
                        size=1)
 p5a
 
-#ggsave("SouthPavilion_WeightedHist.jpg", p5a, width=10, height=7.5, dpi=300)
+ggsave("SouthPavilion_WeightedHist.jpg", p5a, width=10, height=7.5, dpi=300)
+```
 
-#### 15.  Do the Dim 1 -  MCD scatterplot with Phase assignments  ####
-# Do the Phase assigments, based on the Dim1 scores
-# Note, depending on how many phases you have you will need to add or comment out lines and update boundaries
+### 15. Dim 1 - MCD scatterplot with Phase assignments
+Do the Phase assigments, based on the Dim1 scores. 
+- This one uses DAACS Website colors 
+- Be sure to adjust labels and and values accordingly; value for P03 is "darkblue"
+*Note, depending on how many phases you have you will need to add or comment out lines and update boundaries.*
+
+```{r Dim1 MCD Scatterplot}
 CA_MCD_Phase <- CA_MCD %>% mutate(Phase = case_when (Dim1 <= 1.5 ~ 'P01',
                                                      #(Dim1 > -.4) & 
                                                      #(Dim1 <= -1.2) ~ 'P02',
                                                      Dim1 > 1.5 ~ 'P02'
 ))
-
-
-
-# BlueMCD By Dim1 plot by Phase
-# This one uses DAACS Website colors 
-# Be sure to adjust labels and and values accordingly, value for P03 is "darkblue"
 
 p6 <- ggplot(CA_MCD_Phase,aes(x = Dim1, y = blueMCD, 
                               fill= Phase)) +
@@ -701,10 +721,9 @@ p6 <- ggplot(CA_MCD_Phase,aes(x = Dim1, y = blueMCD,
   theme(plot.title = element_text(hjust = 0.5))+
   labs(title="South Pavilion", x="Dimension 1", y="BLUE MCD")
 p6
+ggsave("SPav_Dim1MCDcolor_2018.png", p6, width=10, height=7.5, dpi=300)
 
-#ggsave("SPav_Dim1MCDcolor_2018.png", p6, width=10, height=7.5, dpi=300)
-
-# And here we use viridis colors (for color blind)
+# And here we use viridis colors
 p6a <- ggplot(CA_MCD_Phase,aes(x = Dim1,y = blueMCD, fill= factor(Phase))) +
   #scale_y_continuous(limits=c(1760, 1920)) +
   geom_point(shape=21,  alpha = .75, size= 6)  + 
@@ -714,41 +733,43 @@ p6a <- ggplot(CA_MCD_Phase,aes(x = Dim1,y = blueMCD, fill= factor(Phase))) +
   theme(plot.title = element_text(hjust = 0.5))+
   labs(title="South Pavilion", x="Dimension 1", y="BLUE MCD")
 p6a
+ggsave("SPav_Dim1MCDcolor_2018.png", p6a, width=10, height=7.5, dpi=300)
 
-#ggsave("SPav_Dim1MCDcolor_2018.png", p6a, width=10, height=7.5, dpi=300)
+```
 
+### 16. Compute the MCDs and TPQs for the phases
+- Join the Phases to the ware by unit data
+- Compare assigned DAACS phases to the ones we came up with above and look for diffrences!
 
-##### 16. Compute the MCDs and TPQs for the phases ####
-
-# join the Phases to the ware by unit data
+```{r Phase MCDs TPQs}
 unitPhase <- select(CA_MCD_Phase, unit, Phase) 
 
 wareByUnit_Phase<- left_join (wareTypeData_Unit, unitPhase, by = 'unit') %>%
   mutate(Phase = ifelse(is.na(Phase),'',Phase))
 
-
-
-# Compare assigned DAACS phases to the ones we came up with above
-# looks like there are diffrences!!!!
 with(wareByUnit_Phase, table(DAACSPhase, Phase))
+```
 
+####16.1 Phase MCDs
+- Transpose the data 
+- Apply the Estimate MCD function
+- View results
 
-# Transpose the data for the MCD and CA 
+```{r Phase MCDs}
 wareByPhaseT <- wareByUnit_Phase %>% group_by(Ware, Phase) %>% 
   summarise(count = sum(Quantity)) %>%
   spread(Ware, value=count , fill=0 )
 
-
 dataForMCD_Phase <- RemoveTypesNoDates(wareByPhaseT, MCDTypeTable)
-
-# apply the Estimate MCD function
 MCDByPhase<-EstimateMCD(dataForMCD_Phase$unitData,
                         dataForMCD_Phase$typeData)
-
-# let's see what it looks like
 MCDByPhase
+```
 
-#### 17. Write out .csv contexts and phase assignments for DAACS database #####
+### 17. Write out .csv contexts and phase assignments 
+- Use these later for inputting for the DAACS database
 
+```{r Write csv files}
 phaseAssignments <- select(wareByUnit_Phase, ProjectName, ProjectID, Context, Phase)
 phaseAssignments <- unique(phaseAssignments)
+```
