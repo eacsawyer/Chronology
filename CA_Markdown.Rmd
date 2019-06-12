@@ -275,7 +275,7 @@ It is possible at this point to drop types you do not want in the MCD computatio
 - Here we name the types we do *NOT* want included 
 *NOTE: You will need to add the types that are particular to your site to the select function:*
 
-```{r drop waretypes, eval=FALSE, include=FALSE}
+```{r drop waretypes, eval=TRUE, include=TRUE}
 wareByUnitT1 <- wareByUnitT %>% dplyr::select( 
   - 'American Stoneware',
   - 'Refined Earthenware, unidentifiable')
